@@ -1,17 +1,55 @@
 package service;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.Arrays;
 
+import org.apache.commons.io.FileUtils;
+
+import model.Frame;
 import model.FrameHeader;
+import model.Tag;
 import model.TagHeader;
 
 public class TagExtractor
 {
-    public TagExtractor ()
+    public TagExtractor()
     {
     }
 
-    public TagHeader buildHeader(byte[] bytes)
+    public Tag getTag(File file) throws IOException
+    {
+        Tag tag = new Tag();
+
+        byte[] bytes = FileUtils.readFileToByteArray(file);
+
+        if (!this.hasIdTag(bytes)) {
+            return null;
+        }
+
+        ByteArraySplitter splitter = new ByteArraySplitter(bytes);
+
+        tag.setHeader(this.buildHeader(splitter.getNextRange(10)));
+
+        int size = tag.getHeader().getSize();
+        while (splitter.getCurrent() < size) {
+            Frame frame = new Frame();
+
+            FrameHeader header = this.buildFrameHeader(splitter.getNextRange(10));
+            byte[] value = splitter.getNextRange(header.getSize());
+
+            frame.setHeader(header);
+            frame.setValue(value);
+
+            if (frame.getHeader().getSize() > 0) {
+                tag.addFrame(frame);
+            }
+        }
+
+        return tag;
+    }
+
+    protected TagHeader buildHeader(byte[] bytes)
     {
         if (bytes.length != 10) {
             throw new RuntimeException(String.format("Invalid header, must contains 10 bytes, only %d bytes found", bytes.length));
@@ -34,21 +72,7 @@ public class TagExtractor
         return header;
     }
 
-    public int readBit(byte value, int position)
-    {
-        if (position < 0 || position > 7) {
-            throw new RuntimeException(String.format("Invalid position to read byte : %d", position));
-        }
-
-        return (value >> (7 - position)) & 1;
-    }
-
-    public void displayByte(byte b)
-    {
-        System.out.println(String.format("%8s", Integer.toBinaryString(b)).replace(' ', '0'));
-    }
-
-    public boolean hasIdTag(byte[] bytes)
+    protected boolean hasIdTag(byte[] bytes)
     {
         byte[] headerBytes = Arrays.copyOf(bytes, 10);
 
@@ -65,11 +89,12 @@ public class TagExtractor
         ;
     }
 
-    public boolean hasFooter(byte[] bytes, int size)
+    protected boolean hasFooter(byte[] bytes, int size)
     {
         byte[] footerBytes = Arrays.copyOfRange(bytes, size + 10, size + 20);
 
-        return footerBytes[0] == 0x33
+        return
+            footerBytes[0] == 0x33
             && footerBytes[1] == 0x44
             && footerBytes[2] == 0x49
             && footerBytes[3] < 255
@@ -82,28 +107,26 @@ public class TagExtractor
         ;
     }
 
-    public FrameHeader buildFrameHeader(byte[] bytes, int position)
+    public FrameHeader buildFrameHeader(byte[] bytes)
     {
-        byte[] headerBytes = Arrays.copyOfRange(bytes, position, position + 10);
-
         FrameHeader header = new FrameHeader();
 
-        header.setId(new String(Arrays.copyOf(headerBytes, 4)));
+        header.setId(new String(Arrays.copyOf(bytes, 4)));
 
-        header.setSize(this.computeSize(Arrays.copyOfRange(headerBytes, 4, 8)));
+        header.setSize(this.computeSize(Arrays.copyOfRange(bytes, 4, 8)));
 
-        byte statusMessages = headerBytes[8];
+        byte statusMessages = bytes[8];
         header.setTagAlterPreservation(this.readBit(statusMessages, 1) == 1);
         header.setFileAlterPreservation(this.readBit(statusMessages, 2) == 1);
         header.setReadOnly(this.readBit(statusMessages, 3) == 1);
 
-        byte formatDescription = headerBytes[9];
+        byte formatDescription = bytes[9];
         header.setGroupingIdentity(this.readBit(formatDescription, 1) == 1);
         header.setCompression(this.readBit(formatDescription, 4) == 1);
         header.setEncryption(this.readBit(formatDescription, 5) == 1);
         header.setUnsynchronisation(this.readBit(formatDescription, 6) == 1);
         header.setDataLengthIndicator(this.readBit(formatDescription, 7) == 1);
-        
+
         return header;
     }
 
@@ -113,5 +136,17 @@ public class TagExtractor
     private int computeSize(byte[] bytes)
     {
         return (bytes[0] << 21) | (bytes[1] << 14) | (bytes[2] << 7) | bytes[3];
+    }
+
+    /**
+     * Read bit with specified position in byte (beginning with MSB left).
+     */
+    private int readBit(byte value, int position)
+    {
+        if (position < 0 || position > 7) {
+            throw new RuntimeException(String.format("Invalid position to read byte : %d", position));
+        }
+
+        return (value >> (7 - position)) & 1;
     }
 }
